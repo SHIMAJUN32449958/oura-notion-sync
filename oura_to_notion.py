@@ -7,22 +7,28 @@ OURA_ACCESS_TOKEN = os.getenv("OURA_ACCESS_TOKEN")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
-def die(msg):
+
+def die(msg: str) -> None:
     print(msg)
     sys.exit(1)
 
-def must(ok, msg):
-    if not ok:
+
+def must(value, msg: str) -> None:
+    if not value:
         die(msg)
 
-def get_oura_data(endpoint, date_str):
+
+def get_oura_data(endpoint: str, date_str: str):
     url = f"https://api.ouraring.com/v2/usercollection/{endpoint}"
     headers = {"Authorization": f"Bearer {OURA_ACCESS_TOKEN}"}
     params = {"start_date": date_str, "end_date": date_str}
+
     r = requests.get(url, headers=headers, params=params)
     if r.status_code != 200:
         die(f"[OURA] {endpoint} failed: {r.status_code} {r.text}")
+
     return r.json().get("data", [])
+
 
 def notion_headers():
     return {
@@ -31,13 +37,15 @@ def notion_headers():
         "Notion-Version": "2022-06-28",
     }
 
-def upsert_notion(date_str, readiness, sleep, activity):
+
+def upsert_notion(date_str: str, readiness, sleep, activity) -> None:
     headers = notion_headers()
 
-    # 既存検索
-    qurl = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
-    qpayload = {"filter": {"property": "Date", "date": {"equals": date_str}}}
-    q = requests.post(qurl, headers=headers, json=qpayload)
+    # 既存検索（Date が同じ行があれば更新）
+    query_url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    query_payload = {"filter": {"property": "Date", "date": {"equals": date_str}}}
+
+    q = requests.post(query_url, headers=headers, json=query_payload)
     if q.status_code != 200:
         die(f"[NOTION] query failed: {q.status_code} {q.text}")
 
@@ -50,31 +58,37 @@ def upsert_notion(date_str, readiness, sleep, activity):
     }
 
     results = q.json().get("results", [])
+
     if results:
+        # 更新
         page_id = results[0]["id"]
-        uurl = f"https://api.notion.com/v1/pages/{page_id}"
-        r = requests.patch(uurl, headers=headers, json={"properties": props})
+        update_url = f"https://api.notion.com/v1/pages/{page_id}"
+        r = requests.patch(update_url, headers=headers, json={"properties": props})
         if r.status_code != 200:
             die(f"[NOTION] update failed: {r.status_code} {r.text}")
         print(f"Updated {date_str} page_id={page_id}")
     else:
-        curl = "https://api.notion.com/v1/pages"
+        # 新規作成
+        create_url = "https://api.notion.com/v1/pages"
         payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": props}
-        r = requests.post(curl, headers=headers, json=payload)
+        r = requests.post(create_url, headers=headers, json=payload)
         if r.status_code not in (200, 201):
             die(f"[NOTION] create failed: {r.status_code} {r.text}")
         page_id = r.json().get("id")
         print(f"Created {date_str} page_id={page_id}")
 
-def main():
+
+def main() -> None:
     must(OURA_ACCESS_TOKEN, "Missing OURA_ACCESS_TOKEN")
     must(NOTION_TOKEN, "Missing NOTION_TOKEN")
     must(NOTION_DATABASE_ID, "Missing NOTION_DATABASE_ID")
 
-    # まず「昨日」を試す（必要なら直近3日回す）
-    for i in range(1, 4):
+    print(f"Using Notion DB: {NOTION_DATABASE_ID}")
+
+    # 直近7日ぶんを毎回同期（歯抜け回収＆取りこぼし耐性）
+    for i in range(1, 8):
         day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        print(f"Fetching data for {day} (db={NOTION_DATABASE_ID})")
+        print(f"Fetching data for {day}...")
 
         readiness = get_oura_data("daily_readiness", day)
         sleep = get_oura_data("daily_sleep", day)
@@ -89,9 +103,9 @@ def main():
             continue
 
         upsert_notion(day, readiness_score, sleep_score, activity_score)
-        return
 
-    die("No data found in last 3 days")
+    print("Done")
+
 
 if __name__ == "__main__":
     main()

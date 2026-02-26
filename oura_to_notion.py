@@ -1,26 +1,25 @@
 import os
 import sys
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+# 環境変数の取得
 OURA_ACCESS_TOKEN = os.getenv("OURA_ACCESS_TOKEN")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
-
 
 def die(msg: str) -> None:
     print(msg)
     sys.exit(1)
 
-
 def must(value, msg: str) -> None:
     if not value:
         die(msg)
 
-
 def get_oura_data(endpoint: str, date_str: str):
     url = f"https://api.ouraring.com/v2/usercollection/{endpoint}"
     headers = {"Authorization": f"Bearer {OURA_ACCESS_TOKEN}"}
+    # Oura API v2 では start_date と end_date を同じにすることで特定の日を指定
     params = {"start_date": date_str, "end_date": date_str}
 
     r = requests.get(url, headers=headers, params=params)
@@ -29,14 +28,12 @@ def get_oura_data(endpoint: str, date_str: str):
 
     return r.json().get("data", [])
 
-
 def notion_headers():
     return {
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28",
     }
-
 
 def upsert_notion(date_str: str, readiness, sleep, activity) -> None:
     headers = notion_headers()
@@ -77,7 +74,6 @@ def upsert_notion(date_str: str, readiness, sleep, activity) -> None:
         page_id = r.json().get("id")
         print(f"Created {date_str} page_id={page_id}")
 
-
 def main() -> None:
     must(OURA_ACCESS_TOKEN, "Missing OURA_ACCESS_TOKEN")
     must(NOTION_TOKEN, "Missing NOTION_TOKEN")
@@ -85,9 +81,13 @@ def main() -> None:
 
     print(f"Using Notion DB: {NOTION_DATABASE_ID}")
 
-    # 直近7日ぶんを毎回同期（歯抜け回収＆取りこぼし耐性）
-    for i in range(1, 8):
-        day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+    # 日本時間 (JST) のタイムゾーンを定義
+    JST = timezone(timedelta(hours=9))
+    now_jst = datetime.now(JST)
+
+    # range(0, 8) にすることで、「今日」から「7日前」までの計8日間をチェック
+    for i in range(0, 8):
+        day = (now_jst - timedelta(days=i)).strftime("%Y-%m-%d")
         print(f"Fetching data for {day}...")
 
         readiness = get_oura_data("daily_readiness", day)
@@ -98,6 +98,7 @@ def main() -> None:
         sleep_score = sleep[0].get("score") if sleep else None
         activity_score = activity[0].get("score") if activity else None
 
+        # 全てのスコアが取得できない場合はスキップ
         if readiness_score is None and sleep_score is None and activity_score is None:
             print(f"No data for {day}")
             continue
@@ -105,7 +106,6 @@ def main() -> None:
         upsert_notion(day, readiness_score, sleep_score, activity_score)
 
     print("Done")
-
 
 if __name__ == "__main__":
     main()

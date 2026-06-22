@@ -1,43 +1,43 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+このファイルは、Claude Code (claude.ai/code) がこのリポジトリで作業する際のガイダンスを提供します。
 
-## What this project does
+## プロジェクト概要
 
-A single-script Python tool that pulls daily health scores (Readiness, Sleep, Activity) from the Oura Ring API v2 and upserts them into a Notion database. It runs via GitHub Actions on a daily cron schedule.
+Oura Ring API v2 から毎日の健康スコア（Readiness・Sleep・Activity）を取得し、Notion データベースへ upsert する単一ファイルの Python スクリプト。GitHub Actions で毎日自動実行される。
 
-## Running the script
+## スクリプトの実行方法
 
 ```bash
 pip install requests
 OURA_ACCESS_TOKEN=... NOTION_TOKEN=... NOTION_DATABASE_ID=... python oura_to_notion.py
 ```
 
-There are no tests, no linter configuration, and no `requirements.txt` — `requests` is the only dependency.
+テスト・リンター設定・`requirements.txt` はなく、依存パッケージは `requests` のみ。
 
-## Required environment variables
+## 必要な環境変数
 
-| Variable | Description |
+| 変数名 | 説明 |
 |---|---|
-| `OURA_ACCESS_TOKEN` | Personal access token from the Oura developer portal |
-| `NOTION_TOKEN` | Notion integration token |
-| `NOTION_DATABASE_ID` | ID of the target Notion database |
+| `OURA_ACCESS_TOKEN` | Oura 開発者ポータルで発行した個人アクセストークン |
+| `NOTION_TOKEN` | Notion インテグレーショントークン |
+| `NOTION_DATABASE_ID` | 同期先 Notion データベースの ID |
 
-In production these are set as GitHub Actions secrets.
+本番環境では GitHub Actions の Secrets として設定する。
 
-## Architecture
+## アーキテクチャ
 
-Everything lives in `oura_to_notion.py`. The data flow is:
+すべてのロジックは `oura_to_notion.py` 1 ファイルに集約されている。データの流れは以下の通り：
 
-1. **Oura API v2** (`/v2/usercollection/{endpoint}`) — fetched for `daily_readiness`, `daily_sleep`, `daily_activity` endpoints. `start_date == end_date` targets a single day.
-2. **8-day lookback** — the script iterates today through 7 days ago (JST timezone, `UTC+9`) to catch scores that Oura posts with a delay.
-3. **Notion upsert** — for each day, queries the database by `Date` property; patches the existing page if found, creates a new one otherwise. Skips a day entirely if all three scores are `None`.
+1. **Oura API v2** (`/v2/usercollection/{endpoint}`) — `daily_readiness`・`daily_sleep`・`daily_activity` の 3 エンドポイントを呼び出す。`start_date == end_date` で 1 日分を指定。
+2. **8 日間の遡り取得** — Oura のスコアは遅延投稿されることがあるため、JST（UTC+9）の今日から 7 日前まで計 8 日分をループ処理する。
+3. **Notion upsert** — 各日付について `Date` プロパティで DB を検索し、既存ページがあれば PATCH で更新、なければ新規作成。3 スコアすべて `None` の場合はスキップ。
 
-### Notion database schema
+### Notion データベーススキーマ
 
-The script writes these five properties (must exist in the Notion DB):
+スクリプトが書き込む 5 つのプロパティ（Notion DB 側に事前に作成が必要）：
 
-| Property | Notion type |
+| プロパティ名 | Notion の型 |
 |---|---|
 | `Name` | title |
 | `Date` | date |
@@ -45,10 +45,10 @@ The script writes these five properties (must exist in the Notion DB):
 | `Sleep` | number |
 | `Activity` | number |
 
-## GitHub Actions workflow
+## GitHub Actions ワークフロー
 
-`.github/workflows/sync.yml` triggers on:
-- **Cron**: `0 21 * * *` UTC = 06:00 JST (morning after overnight sleep data is available)
-- **Manual**: `workflow_dispatch`
+`.github/workflows/sync.yml` のトリガー：
+- **スケジュール**: `0 21 * * *` UTC = JST 06:00（睡眠データが出揃う朝に実行）
+- **手動**: `workflow_dispatch`
 
-The workflow checks out the repo, installs Python + `requests`, and runs the script with the three secrets injected as environment variables.
+ワークフローはリポジトリをチェックアウトし、Python と `requests` をインストールしたうえで、3 つの Secrets を環境変数として注入してスクリプトを実行する。
